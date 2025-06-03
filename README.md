@@ -5,4 +5,4 @@ EXECUTAR:
 
 teste pelo terminal:  python calculo_circuito3.py
 
-aplicacao web: streamlit run app_web_circuito.py
+aplicacao web: streamlit run app_web_circuito.py ou python -m streamlit run app_web_circuito.py
