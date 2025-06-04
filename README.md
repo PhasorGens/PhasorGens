@@ -35,8 +35,11 @@ Este simulador permite modelar circuitos elétricos de **corrente alternada (CA)
 ### 1️⃣ Pré-requisitos
 - Python 3.8+
 - Bibliotecas: `streamlit`, `matplotlib`, `numpy`
-
-
+```bash
+pip install streamlit
+pip install matplotlib
+pip install numpy
+````
 ### 2️⃣ Instalação
 ```bash
 git clone https://github.com/seu-usuario/simulador-circuitos-ca.git
