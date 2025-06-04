@@ -103,7 +103,7 @@ def plot_resposta_frequencia(R, L, C, freq_min=10, freq_max=1000):
     
     return fig
 
-# Inicialização do estado da sessão
+# Inicialização adicional do estado da sessão
 def init_session_state():
     """Inicializa todas as variáveis de estado necessárias."""
     if 'componentes' not in st.session_state:
@@ -124,6 +124,8 @@ def init_session_state():
         st.session_state.fonte_frequencia = 60.0
     if 'modo_avancado' not in st.session_state:
         st.session_state.modo_avancado = False
+    if 'valores_ajuste' not in st.session_state:
+        st.session_state.valores_ajuste = {}
 
 # Configuração da página
 st.set_page_config(
@@ -144,16 +146,18 @@ st.markdown("""
 # Barra lateral para configurações da fonte
 with st.sidebar:
     st.header("Configurações da Fonte")
-    st.session_state.fonte_voltagem = st.number_input(
+    st.session_state.fonte_voltagem = st.slider(
         "Tensão (Vrms):", 
-        min_value=0.0, 
-        value=st.session_state.fonte_voltagem, 
+        min_value=0.0,
+        max_value=220.0,
+        value=st.session_state.fonte_voltagem,
         step=1.0
     )
-    st.session_state.fonte_frequencia = st.number_input(
+    st.session_state.fonte_frequencia = st.slider(
         "Frequência (Hz):", 
-        min_value=0.0, 
-        value=st.session_state.fonte_frequencia, 
+        min_value=1.0,
+        max_value=1000.0,
+        value=st.session_state.fonte_frequencia,
         step=1.0
     )
     
@@ -169,6 +173,7 @@ with st.sidebar:
         st.session_state.primeiro_componente = True
         st.session_state.conexao = "SÉRIE"
         st.session_state.valor_componente = 0.0
+        st.session_state.valores_ajuste = {}
         st.success("Circuito reiniciado com sucesso!")
         st.rerun()
 
@@ -194,7 +199,7 @@ with st.expander("Adicionar Componentes", expanded=True):
                     min_val = 0.0
                 else:  # Capacitor
                     label = "Capacitância (F):"
-                    min_val = 1e-12  # 1 pF como valor mínimo
+                    min_val = 1e-12
             else:
                 if tipo == 'Resistor (R)':
                     label = "Resistência (Ω):"
@@ -251,15 +256,30 @@ with st.expander("Adicionar Componentes", expanded=True):
                         desc = f"C: -j{valor:.2f} Ω"
                 
                 # Adiciona ao circuito
+                comp_id = len(st.session_state.componentes)
                 if st.session_state.primeiro_componente:
                     st.session_state.impedancia_total = Z
                     st.session_state.primeiro_componente = False
-                    st.session_state.componentes.append(f"Primeiro componente: {desc}")
+                    st.session_state.componentes.append({
+                        'id': comp_id,
+                        'tipo': tipo,
+                        'valor': valor,
+                        'desc': f"Primeiro componente: {desc}",
+                        'Z': Z,
+                        'conexao': 'PRIMEIRO'
+                    })
                 else:
                     st.session_state.conexao = conexao
                     if conexao == 'SÉRIE':
                         st.session_state.impedancia_total += Z
-                        st.session_state.componentes.append(f"Adicionado em série: {desc}")
+                        st.session_state.componentes.append({
+                            'id': comp_id,
+                            'tipo': tipo,
+                            'valor': valor,
+                            'desc': f"Adicionado em série: {desc}",
+                            'Z': Z,
+                            'conexao': 'SÉRIE'
+                        })
                     else:  # PARALELO
                         if abs(st.session_state.impedancia_total + Z) < 1e-9:
                             st.error("Erro: Divisão por zero na conexão paralela!")
@@ -267,22 +287,96 @@ with st.expander("Adicionar Componentes", expanded=True):
                             st.session_state.impedancia_total = (
                                 st.session_state.impedancia_total * Z
                             ) / (st.session_state.impedancia_total + Z)
-                            st.session_state.componentes.append(f"Adicionado em paralelo: {desc}")
+                            st.session_state.componentes.append({
+                                'id': comp_id,
+                                'tipo': tipo,
+                                'valor': valor,
+                                'desc': f"Adicionado em paralelo: {desc}",
+                                'Z': Z,
+                                'conexao': 'PARALELO'
+                            })
                 
                 st.session_state.valor_componente = 0.0
                 st.success(f"Componente adicionado: {desc}")
                 st.rerun()
 
-# Visualização do circuito
+# Visualização e ajuste do circuito
 st.subheader("Circuito Montado")
 if not st.session_state.componentes:
     st.info("Nenhum componente adicionado ainda. Use o formulário acima para começar.")
 else:
-    for i, comp in enumerate(st.session_state.componentes, 1):
-        st.write(f"{i}. {comp}")
+    # Mostrar e permitir ajuste dos componentes
+    st.write("Ajuste os valores dos componentes:")
+    
+    # Recalcular impedância total com os valores ajustados
+    Z_total = st.session_state.impedancia_total
+
+    primeiro = True
+    
+    for comp in st.session_state.componentes:
+        # Criar um slider para cada componente
+        if comp['tipo'] == 'Resistor (R)':
+            novo_valor = st.slider(
+                f"Ajuste {comp['desc']}",
+                0.0, 1000.0, 
+                comp['valor'],
+                key=f"slider_{comp['id']}"
+            )
+            Z = complex(novo_valor, 0)
+        elif comp['tipo'] == 'Indutor (L)':
+            if st.session_state.modo_avancado:
+                novo_valor = st.slider(
+                    f"Ajuste {comp['desc']}",
+                    0.0, 10.0, 
+                    comp['valor'],
+                    key=f"slider_{comp['id']}"
+                )
+                XL = 2 * math.pi * st.session_state.fonte_frequencia * novo_valor
+                Z = complex(0, XL)
+            else:
+                novo_valor = st.slider(
+                    f"Ajuste {comp['desc']}",
+                    0.0, 1000.0, 
+                    comp['valor'],
+                    key=f"slider_{comp['id']}"
+                )
+                Z = complex(0, novo_valor)
+        else:  # Capacitor
+            if st.session_state.modo_avancado:
+                novo_valor = st.slider(
+                    f"Ajuste {comp['desc']}",
+                    1e-12, 1e-3, 
+                    comp['valor'],
+                    key=f"slider_{comp['id']}"
+                )
+                XC = 1/(2 * math.pi * st.session_state.fonte_frequencia * novo_valor)
+                Z = complex(0, -XC)
+            else:
+                novo_valor = st.slider(
+                    f"Ajuste {comp['desc']}",
+                    0.0, 1000.0, 
+                    comp['valor'],
+                    key=f"slider_{comp['id']}"
+                )
+                Z = complex(0, -novo_valor)
+        
+        # Atualizar a impedância total
+        if primeiro:
+            Z_total = Z
+            primeiro = False
+        else:
+            if comp['conexao'] == 'SÉRIE':
+                Z_total += Z
+            else:  # PARALELO
+                Z_total = (Z_total * Z) / (Z_total + Z)
+    
+    # Atualizar a impedância total no estado da sessão
+    st.session_state.impedancia_total = Z_total
 
 # Resultados e análises
 st.subheader("Resultados da Análise")
+
+# Exibir resultados
 ret_total, pol_total = formatar_complexo(st.session_state.impedancia_total)
 
 col1, col2 = st.columns(2)
@@ -313,32 +407,41 @@ with col2:
     if abs(st.session_state.impedancia_total) > 1e-9:
         st.pyplot(plot_fasores(st.session_state.impedancia_total))
         
-        # Verifica se temos pelo menos um indutor e um capacitor para análise de ressonância
-        componentes = [c.split(':')[0] for c in st.session_state.componentes]
-        if 'L' in ''.join(componentes) and 'C' in ''.join(componentes) and st.session_state.fonte_frequencia > 0:
-            # Estimativa de L e C para o gráfico (simplificado)
-            L_est = 0
-            C_est = 0
-            for comp in st.session_state.componentes:
-                if 'L:' in comp:
-                    parts = comp.split('j')
-                    if len(parts) > 1:
-                        xl = float(parts[1].split(' ')[0])
-                        L_est = xl / (2 * math.pi * st.session_state.fonte_frequencia)
-                elif 'C:' in comp:
-                    parts = comp.split('-j')
-                    if len(parts) > 1:
-                        xc = float(parts[1].split(' ')[0])
-                        C_est = 1 / (2 * math.pi * st.session_state.fonte_frequencia * xc)
-            
-            if L_est > 0 and C_est > 0:
-                st.pyplot(plot_resposta_frequencia(
-                    R=abs(st.session_state.impedancia_total.real),
-                    L=L_est,
-                    C=C_est,
-                    freq_min=0.1,
-                    freq_max=1000
-                ))
+        # Verificar se existem componentes L e C no circuito
+        tem_L = False
+        tem_C = False
+        L_total = 0
+        C_total = 0
+        
+        for comp in st.session_state.componentes:
+            if comp['tipo'] == 'Indutor (L)':
+                tem_L = True
+                if st.session_state.modo_avancado:
+                    # Se estiver em modo avançado, o valor já está em H
+                    L_total = comp['valor']
+                else:
+                    # Se não estiver em modo avançado, converter de reatância para H
+                    XL = comp['valor']
+                    L_total = XL / (2 * math.pi * st.session_state.fonte_frequencia)
+            elif comp['tipo'] == 'Capacitor (C)':
+                tem_C = True
+                if st.session_state.modo_avancado:
+                    # Se estiver em modo avançado, o valor já está em F
+                    C_total = comp['valor']
+                else:
+                    # Se não estiver em modo avançado, converter de reatância para F
+                    XC = comp['valor']
+                    C_total = 1 / (2 * math.pi * st.session_state.fonte_frequencia * XC)
+        
+        # Plotar resposta em frequência se houver L e C
+        if tem_L and tem_C:
+            st.pyplot(plot_resposta_frequencia(
+                R=abs(st.session_state.impedancia_total.real),
+                L=L_total,
+                C=C_total,
+                freq_min=1,
+                freq_max=1000
+            ))
 
 # Rodapé
 st.markdown("---")
