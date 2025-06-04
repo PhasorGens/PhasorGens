@@ -36,17 +36,43 @@ def calcular_potencias(V, I, Z):
 def plot_fasores(Z_total):
     """Gera um diagrama fasorial da impedância."""
     fig, ax = plt.subplots(figsize=(6, 6))
-    ax.quiver(0, 0, Z_total.real, Z_total.imag, 
-              angles='xy', scale_units='xy', scale=1, 
-              color='r', width=0.005)
-    ax.set_xlim(-1.1*max(abs(Z_total.real), 1.1*max(abs(Z_total.real), 1)))
-    ax.set_ylim(-1.1*max(abs(Z_total.imag), 1.1*max(abs(Z_total.imag), 1)))
-    ax.axhline(0, color='black', linewidth=0.5)
-    ax.axvline(0, color='black', linewidth=0.5)
-    ax.grid(True, linestyle='--', alpha=0.7)
+    
+    # Calcula a magnitude e fase para o texto
+    magnitude, fase_rad = cmath.polar(Z_total)
+    fase_graus = math.degrees(fase_rad)
+    
+    # Plota o fasor como uma seta
+    ax.quiver(0, 0, Z_total.real, Z_total.imag,
+              angles='xy', scale_units='xy', scale=1,
+              color='red', width=0.005, zorder=3,
+              label=f'Z = {magnitude:.2f}∠{fase_graus:.1f}°')
+    
+    # Calcula os limites do gráfico
+    max_val = max(abs(Z_total.real), abs(Z_total.imag), 1)
+    lim = max_val * 1.2  # Adiciona 20% de margem
+    
+    # Configura os limites e a grade
+    ax.set_xlim(-lim, lim)
+    ax.set_ylim(-lim, lim)
+    
+    # Adiciona linhas de eixo
+    ax.axhline(y=0, color='black', linewidth=0.5, zorder=1)
+    ax.axvline(x=0, color='black', linewidth=0.5, zorder=1)
+    
+    # Configura a grade
+    ax.grid(True, linestyle='--', alpha=0.3, zorder=0)
+    
+    # Adiciona rótulos e título
     ax.set_xlabel('Parte Real (Ω)')
     ax.set_ylabel('Parte Imaginária (Ω)')
     ax.set_title('Diagrama Fasorial da Impedância')
+    
+    # Adiciona legenda
+    ax.legend(loc='upper right')
+    
+    # Garante que o aspecto seja igual (círculo perfeito)
+    ax.set_aspect('equal')
+    
     return fig
 
 def plot_resposta_frequencia(R, L, C, freq_min=10, freq_max=1000):
