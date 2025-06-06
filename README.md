@@ -8,6 +8,14 @@
 
 ---
 
+## 🚀 Acesso ao Simulador
+
+Para testar o sistema em produção, acesse o link abaixo:
+
+**[➡️ Acessar o Simulador Online](https://phasorgens-simulador.streamlit.app/)**
+
+---
+
 ## 📌 Visão Geral
 
 Este simulador permite modelar circuitos elétricos de **corrente alternada (CA)** com componentes **R (Resistor), L (Indutor) e C (Capacitor)**, conectados em **série ou paralelo**. Ele calcula automaticamente:
