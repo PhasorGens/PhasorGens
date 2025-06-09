@@ -58,4 +58,5 @@ git clone https://github.com/seu-usuario/simulador-circuitos-ca.git
 python -m streamlit run app_web_circuito.py
 ````
 
-![QRcode site](https://github.com/user-attachments/assets/fae18465-c883-4669-a619-573647bcacdb)
+![QRcode site](https://github.com/user-attachments/assets/06c6e8c8-a12d-435b-b439-3011b5f75a98)
+
