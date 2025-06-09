@@ -3,321 +3,333 @@ import cmath
 import math
 import matplotlib.pyplot as plt
 import numpy as np
-from io import BytesIO
+from schemdraw import Drawing
+from schemdraw import elements as elm
 
-# Funções auxiliares
-def formatar_complexo(numero_complexo):
-    """Formata um número complexo para exibição nas formas retangular e polar."""
-    if abs(numero_complexo.real) < 1e-9 and abs(numero_complexo.imag) < 1e-9:
-        retangular = "0.0000"
-    elif abs(numero_complexo.imag) < 1e-9:
-        retangular = f"{numero_complexo.real:.4f}"
-    elif abs(numero_complexo.real) < 1e-9:
-        retangular = f"{'' if numero_complexo.imag >= 0 else '-'}j{abs(numero_complexo.imag):.4f}"
-    else:
-        retangular = f"{numero_complexo.real:.4f} {'+' if numero_complexo.imag >= 0 else '-'} j{abs(numero_complexo.imag):.4f}"
+# --- FUNÇÕES DE CÁLCULO E AUXILIARES ---
+
+def calcular_impedancia_total(componentes, frequencia):
+    # Esta função já estava correta e foi mantida.
+    if not componentes: return complex(0, 0)
+    def get_impedancia_componente(comp):
+        if comp['tipo'] == 'Resistor (R)': unidade_base = 'Ω'
+        elif comp['tipo'] == 'Indutor (L)': unidade_base = 'H'
+        else: unidade_base = 'F'
+        valor_base = converter_valor(comp['valor'], comp['unidade'], unidade_base, comp['tipo'])
+        if comp['tipo'] == 'Resistor (R)': return complex(valor_base, 0)
+        elif comp['tipo'] == 'Indutor (L)':
+            if frequencia == 0: return complex(0, 0)
+            return complex(0, 2 * math.pi * frequencia * valor_base)
+        elif comp['tipo'] == 'Capacitor (C)':
+            if valor_base == 0 or frequencia == 0: return complex(0, float('inf'))
+            return complex(0, -1 / (2 * math.pi * frequencia * valor_base))
+        return complex(0, 0)
+    impedancias_finais_em_serie = []
+    i = 0
+    while i < len(componentes):
+        comp_atual = componentes[i]
+        if comp_atual['conexao'] in ['SÉRIE', 'PRIMEIRO']:
+            impedancias_finais_em_serie.append(get_impedancia_componente(comp_atual))
+            i += 1
+        elif comp_atual['conexao'] == 'PARALELO':
+            if not impedancias_finais_em_serie:
+                i += 1
+                continue
+            impedancia_anterior = impedancias_finais_em_serie.pop()
+            admitancias_do_grupo = [1 / impedancia_anterior] if impedancia_anterior != 0 else []
+            while i < len(componentes) and componentes[i]['conexao'] == 'PARALELO':
+                z_paralelo = get_impedancia_componente(componentes[i])
+                if z_paralelo != 0: admitancias_do_grupo.append(1 / z_paralelo)
+                i += 1
+            admitancia_total_grupo = sum(admitancias_do_grupo)
+            impedancia_equivalente = 1 / admitancia_total_grupo if admitancia_total_grupo != 0 else complex(0, float('inf'))
+            impedancias_finais_em_serie.append(impedancia_equivalente)
+    return sum(impedancias_finais_em_serie)
+
+# ==============================================================================
+# SUA FUNÇÃO DE DESENHO DO CIRCUITO (Implementada como solicitado)
+# ==============================================================================
+def desenhar_circuito(componentes):
+    """Desenha o circuito com os componentes adicionados."""
+    d = Drawing()
     
+    # Configurações iniciais
+    spacing = 3  # Aumentei o espaçamento para melhor visualização
+    
+    # Adiciona fonte AC e guarda a altura
+    fonte_elemento = elm.SourceSin().label('V').up()
+    d += fonte_elemento
+    altura_fonte = fonte_elemento.end[1]
+    last_point = fonte_elemento.end
+    
+    # Se não há componentes, fecha o circuito
+    if not componentes:
+        d += elm.Line().right().length(spacing)
+        d += elm.Line().down().length(altura_fonte)
+        d += elm.Line().left().length(spacing)
+        return d
+    
+    # Organiza componentes por conexão
+    series_components = []
+    parallel_groups = []
+    current_parallel = []
+    
+    # Este bloco de agrupamento é a chave da lógica desta função.
+    # Ele separa todos os componentes em série e paralelo, sem manter a ordem mista.
+    for comp in componentes:
+        if comp['conexao'] == 'PARALELO':
+            current_parallel.append(comp)
+        else:
+            if current_parallel:
+                parallel_groups.append(current_parallel)
+                current_parallel = []
+            if comp['conexao'] == 'SÉRIE' or comp['conexao'] == 'PRIMEIRO':
+                series_components.append(comp)
+    
+    if current_parallel:
+        parallel_groups.append(current_parallel)
+    
+    # Função aninhada para desenhar um componente individual
+    def add_component(drawing, comp, direction='right'):
+        nonlocal last_point
+        
+        if comp['tipo'] == 'Resistor (R)':
+            element = elm.Resistor().label(f'R{comp["id"]+1}\n{comp["valor"]:.1f}{comp["unidade"]}')
+        elif comp['tipo'] == 'Indutor (L)':
+            element = elm.Inductor().label(f'L{comp["id"]+1}\n{comp["valor"]:.1f}{comp["unidade"]}')
+        else:  # Capacitor
+            element = elm.Capacitor().label(f'C{comp["id"]+1}\n{comp["valor"]:.1f}{comp["unidade"]}')
+        
+        if direction == 'right':
+            element.right().length(spacing)
+        else:
+            element.up().length(spacing)
+        
+        drawing += element.at(last_point)
+        last_point = element.end
+    
+    # 1. Desenha todos os componentes em série primeiro
+    for comp in series_components:
+        d += elm.Line().right().length(spacing/2).at(last_point)
+        last_point = (last_point[0] + spacing/2, last_point[1])
+        add_component(d, comp)
+        
+    # 2. Desenha todos os grupos paralelos
+    for group in parallel_groups:
+        if not group:
+            continue
+            
+        start_x = last_point[0] + spacing/2
+        height_per_comp = 3
+        total_height = len(group) * height_per_comp
+        
+        # Linhas de conexão verticais
+        d += elm.Line().right().length(spacing/2).at(last_point)
+        start_point = (start_x, last_point[1])
+        d += elm.Line().up().length(total_height/2).at(start_point)
+        d += elm.Line().down().length(total_height/2).at(start_point)
+        
+        # Desenha os componentes em paralelo
+        for i, comp in enumerate(group):
+            y_offset = total_height/2 - i * height_per_comp - height_per_comp / 2
+            comp_start = (start_x, last_point[1] + y_offset)
+            
+            if comp['tipo'] == 'Resistor (R)':
+                element = elm.Resistor().label(f'R{comp["id"]+1}\n{comp["valor"]:.1f}{comp["unidade"]}')
+            elif comp['tipo'] == 'Indutor (L)':
+                element = elm.Inductor().label(f'L{comp["id"]+1}\n{comp["valor"]:.1f}{comp["unidade"]}')
+            else:  # Capacitor
+                element = elm.Capacitor().label(f'C{comp["id"]+1}\n{comp["valor"]:.1f}{comp["unidade"]}')
+            
+            d += element.right().length(spacing*2).at(comp_start)
+        
+        last_point = (start_x + spacing*2, last_point[1])
+        
+        end_point = (last_point[0], last_point[1])
+        d += elm.Line().up().length(total_height/2).at(end_point)
+        d += elm.Line().down().length(total_height/2).at(end_point)
+    
+    # Fecha o circuito
+    d += elm.Line().right().length(spacing/2).at(last_point)
+    final_point = (last_point[0] + spacing/2, last_point[1])
+    d += elm.Line().down().length(altura_fonte).at(final_point)
+    d += elm.Line().left().length(final_point[0]).at((final_point[0], 0))
+    
+    return d
+
+
+def plotar_resposta_em_frequencia(componentes, freq_min, freq_max, freq_atual):
+    freqs = np.logspace(np.log10(freq_min), np.log10(freq_max), 400)
+    magnitudes = [abs(calcular_impedancia_total(componentes, f)) for f in freqs]
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.semilogx(freqs, magnitudes)
+    ax.set_xlabel('Frequência (Hz)'); ax.set_ylabel('Magnitude da Impedância |Z| (Ω)'); ax.set_title('Resposta em Frequência do Circuito')
+    ax.grid(True, which="both", ls="-")
+    Z_atual = calcular_impedancia_total(componentes, freq_atual)
+    ax.axvline(freq_atual, color='red', linestyle='--', alpha=0.8)
+    ax.plot(freq_atual, abs(Z_atual), 'ro')
+    ax.text(freq_atual, abs(Z_atual), f'  {freq_atual:.0f} Hz', verticalalignment='bottom')
+    return fig
+
+# Funções auxiliares (sem alterações)
+def formatar_complexo(numero_complexo):
+    if abs(numero_complexo.real) < 1e-9 and abs(numero_complexo.imag) < 1e-9: retangular = "0.0000"
+    elif abs(numero_complexo.imag) < 1e-9: retangular = f"{numero_complexo.real:.4f}"
+    elif abs(numero_complexo.real) < 1e-9: retangular = f"{'' if numero_complexo.imag >= 0 else '-'}j{abs(numero_complexo.imag):.4f}"
+    else: retangular = f"{numero_complexo.real:.4f} {'+' if numero_complexo.imag >= 0 else '-'} j{abs(numero_complexo.imag):.4f}"
     magnitude, fase_rad = cmath.polar(numero_complexo)
-    if abs(magnitude) < 1e-9:
-        fase_graus = 0.0
-    else:
-        fase_graus = math.degrees(fase_rad)
+    fase_graus = math.degrees(fase_rad) if abs(magnitude) > 1e-9 else 0.0
     polar = f"{magnitude:.4f} ∠ {fase_graus:.2f}°"
     return retangular, polar
 
-def calcular_potencias(V, I, Z):
-    """Calcula as potências ativa, reativa e aparente."""
-    S = V * I  # Potência aparente (VA)
-    P = S * math.cos(cmath.phase(Z))  # Potência ativa (W)
-    Q = S * math.sin(cmath.phase(Z))  # Potência reativa (VAR)
-    fp = math.cos(cmath.phase(Z))  # Fator de potência
+def calcular_potencias(V, I_complexa):
+    S_complexa = V * I_complexa.conjugate()
+    P, Q, S = S_complexa.real, S_complexa.imag, abs(S_complexa)
+    fp = P / S if S > 1e-9 else 1.0
     return P, Q, S, fp
 
 def plot_fasores(Z_total):
-    """Gera um diagrama fasorial da impedância."""
     fig, ax = plt.subplots(figsize=(6, 6))
-    ax.quiver(0, 0, Z_total.real, Z_total.imag, 
-              angles='xy', scale_units='xy', scale=1, 
-              color='r', width=0.005)
-    ax.set_xlim(-1.1*max(abs(Z_total.real), 1.1*max(abs(Z_total.real), 1)))
-    ax.set_ylim(-1.1*max(abs(Z_total.imag), 1.1*max(abs(Z_total.imag), 1)))
-    ax.axhline(0, color='black', linewidth=0.5)
-    ax.axvline(0, color='black', linewidth=0.5)
-    ax.grid(True, linestyle='--', alpha=0.7)
-    ax.set_xlabel('Parte Real (Ω)')
-    ax.set_ylabel('Parte Imaginária (Ω)')
-    ax.set_title('Diagrama Fasorial da Impedância')
+    magnitude, R, X = abs(Z_total), Z_total.real, Z_total.imag
+    fase_graus = math.degrees(cmath.phase(Z_total))
+    ax.quiver(0, 0, R, X, angles='xy', scale_units='xy', scale=1, color='red', width=0.02, zorder=3)
+    ax.text(R/2, X/2, f'Z = {magnitude:.2f}∠{fase_graus:.1f}°\nR = {R:.2f}\nX = {X:.2f}', ha='center', va='center', bbox=dict(facecolor='white', alpha=0.7))
+    lim = max(abs(R), abs(X), 1) * 1.5
+    ax.set_xlim(-lim, lim); ax.set_ylim(-lim, lim)
+    ax.axhline(0, color='black', lw=0.5); ax.axvline(0, color='black', lw=0.5)
+    ax.grid(True, linestyle='--', alpha=0.3); ax.set_aspect('equal')
+    ax.set_xlabel('Resistência (Ω)'); ax.set_ylabel('Reatância (Ω)'); ax.set_title('Diagrama Fasorial da Impedância')
+    ax.add_artist(plt.Circle((0, 0), magnitude, fill=False, linestyle='--', color='gray', alpha=0.5))
     return fig
 
-def plot_resposta_frequencia(R, L, C, freq_min=10, freq_max=1000):
-    """Gera o gráfico da resposta em frequência para um circuito RLC série."""
-    freqs = np.logspace(np.log10(freq_min), np.log10(freq_max), 200)
-    impedancias = []
-    
-    for f in freqs:
-        XL = 2 * math.pi * f * L if L > 0 else 0
-        XC = 1/(2 * math.pi * f * C) if C > 0 else 0
-        Z = complex(R, XL - XC)
-        impedancias.append(abs(Z))
-    
-    fig, ax = plt.subplots(figsize=(8, 4))
-    ax.semilogx(freqs, impedancias)
-    ax.set_xlabel('Frequência (Hz)')
-    ax.set_ylabel('Impedância (Ω)')
-    ax.set_title('Resposta em Frequência do Circuito')
-    ax.grid(True, which="both", ls="-")
-    
-    # Marcar frequência de ressonância se aplicável
-    if L > 0 and C > 0:
-        fr = 1/(2 * math.pi * math.sqrt(L * C))
-        Zr = math.sqrt(R**2 + (2 * math.pi * fr * L - 1/(2 * math.pi * fr * C))**2)
-        ax.axvline(fr, color='red', linestyle='--', alpha=0.7)
-        ax.text(fr, max(impedancias)*0.9, f'Ressonância: {fr:.2f} Hz', 
-                horizontalalignment='center')
-    
-    return fig
-
-# Inicialização do estado da sessão
 def init_session_state():
-    """Inicializa todas as variáveis de estado necessárias."""
-    if 'componentes' not in st.session_state:
-        st.session_state.componentes = []
-    if 'impedancia_total' not in st.session_state:
-        st.session_state.impedancia_total = complex(0, 0)
-    if 'primeiro_componente' not in st.session_state:
-        st.session_state.primeiro_componente = True
-    if 'conexao' not in st.session_state:
-        st.session_state.conexao = "SÉRIE"
-    if 'tipo_componente' not in st.session_state:
-        st.session_state.tipo_componente = 'Resistor (R)'
-    if 'valor_componente' not in st.session_state:
-        st.session_state.valor_componente = 0.0
-    if 'fonte_voltagem' not in st.session_state:
-        st.session_state.fonte_voltagem = 120.0
-    if 'fonte_frequencia' not in st.session_state:
-        st.session_state.fonte_frequencia = 60.0
-    if 'modo_avancado' not in st.session_state:
-        st.session_state.modo_avancado = False
+    if 'componentes' not in st.session_state: st.session_state.componentes = []
+    if 'impedancia_total' not in st.session_state: st.session_state.impedancia_total = complex(0, 0)
+    if 'primeiro_componente' not in st.session_state: st.session_state.primeiro_componente = True
+    if 'unidade_atual' not in st.session_state: st.session_state.unidade_atual = {'Resistor (R)': 'Ω', 'Indutor (L)': 'mH', 'Capacitor (C)': 'µF'}
+    if 'valor_atual' not in st.session_state: st.session_state.valor_atual = {'Resistor (R)': 100.0, 'Indutor (L)': 10.0, 'Capacitor (C)': 10.0}
+    if 'fonte_voltagem' not in st.session_state: st.session_state.fonte_voltagem = 120.0
+    if 'fonte_frequencia' not in st.session_state: st.session_state.fonte_frequencia = 60.0
 
-# Configuração da página
-st.set_page_config(
-    page_title="Simulador de Circuitos CA", 
-    layout="wide",
-    page_icon="⚡"
-)
+def converter_valor(valor, unidade_origem, unidade_destino, tipo):
+    fatores = {'Resistor (R)': {'Ω': 1, 'kΩ': 1e3, 'MΩ': 1e6}, 'Indutor (L)': {'H': 1, 'mH': 1e-3, 'µH': 1e-6}, 'Capacitor (C)': {'F': 1, 'mF': 1e-3, 'µF': 1e-6, 'nF': 1e-9, 'pF': 1e-12}}
+    valor_base = valor * fatores[tipo][unidade_origem]
+    return valor_base / fatores[tipo][unidade_destino]
 
-# Inicializa o estado da sessão
+def get_step_and_format(unidade):
+    if unidade in ['MΩ', 'F']: return 0.000001, "%.6f"
+    elif unidade in ['kΩ', 'H', 'mF']: return 0.001, "%.3f"
+    else: return 0.1, "%.1f"
+
+# --- INTERFACE PRINCIPAL ---
+st.set_page_config(page_title="Simulador de Circuitos CA", layout="wide", page_icon="⚡")
 init_session_state()
 
-# Interface principal
 st.title("⚡ Simulador de Circuitos de Corrente Alternada")
-st.markdown("""
-    *Simule circuitos RLC em série ou paralelo e visualize as propriedades do circuito.*
-    """)
+st.markdown("*Simule circuitos RLC com associações em série e paralelo e visualize as propriedades do circuito.*")
 
-# Barra lateral para configurações da fonte
 with st.sidebar:
     st.header("Configurações da Fonte")
-    st.session_state.fonte_voltagem = st.number_input(
-        "Tensão (Vrms):", 
-        min_value=0.0, 
-        value=st.session_state.fonte_voltagem, 
-        step=1.0
-    )
-    st.session_state.fonte_frequencia = st.number_input(
-        "Frequência (Hz):", 
-        min_value=0.0, 
-        value=st.session_state.fonte_frequencia, 
-        step=1.0
-    )
-    
-    st.header("Opções Avançadas")
-    st.session_state.modo_avancado = st.checkbox(
-        "Modo Avançado (L/C como valores físicos)", 
-        value=st.session_state.modo_avancado
-    )
-    
-    if st.button("Reiniciar Circuito"):
-        st.session_state.componentes = []
-        st.session_state.impedancia_total = complex(0, 0)
-        st.session_state.primeiro_componente = True
-        st.session_state.conexao = "SÉRIE"
-        st.session_state.valor_componente = 0.0
-        st.success("Circuito reiniciado com sucesso!")
-        st.rerun()
+    st.session_state.fonte_voltagem = st.slider("Tensão (Vrms):", 0.0, 240.0, st.session_state.fonte_voltagem, 1.0)
+    st.session_state.fonte_frequencia = st.slider("Frequência (Hz):", 1.0, 10000.0, st.session_state.fonte_frequencia, 1.0, format="%f Hz")
+    if st.button("Reiniciar Circuito", use_container_width=True):
+        st.session_state.componentes, st.session_state.primeiro_componente = [], True
+        st.success("Circuito reiniciado!"); st.rerun()
 
-# Formulário para adicionar componentes
 with st.expander("Adicionar Componentes", expanded=True):
     with st.form(key="form_componente"):
         col1, col2 = st.columns(2)
-        
         with col1:
-            tipo = st.selectbox(
-                "Tipo de Componente:",
-                ('Resistor (R)', 'Indutor (L)', 'Capacitor (C)'),
-                key='select_tipo_componente'
-            )
-            
-        with col2:
-            if st.session_state.modo_avancado:
-                if tipo == 'Resistor (R)':
-                    label = "Resistência (Ω):"
-                    min_val = 0.0
-                elif tipo == 'Indutor (L)':
-                    label = "Indutância (H):"
-                    min_val = 0.0
-                else:  # Capacitor
-                    label = "Capacitância (F):"
-                    min_val = 1e-12  # 1 pF como valor mínimo
-            else:
-                if tipo == 'Resistor (R)':
-                    label = "Resistência (Ω):"
-                    min_val = 0.0
-                elif tipo == 'Indutor (L)':
-                    label = "Reatância Indutiva (Ω):"
-                    min_val = 0.0
-                else:  # Capacitor
-                    label = "Reatância Capacitiva (Ω):"
-                    min_val = 0.0
-            
-            valor = st.number_input(
-                label,
-                min_value=min_val,
-                value=st.session_state.valor_componente,
-                step=0.01 if not st.session_state.modo_avancado else 1e-6,
-                format="%.4f" if st.session_state.modo_avancado else "%.2f"
-            )
-        
-        if not st.session_state.primeiro_componente:
-            conexao = st.radio(
-                "Conectar em:",
-                ('SÉRIE', 'PARALELO'),
-                index=0 if st.session_state.conexao == "SÉRIE" else 1,
-                horizontal=True
-            )
-        
-        if st.form_submit_button("Adicionar Componente"):
-            if valor <= 0:
-                st.error("O valor do componente deve ser positivo!")
-            else:
-                # Calcula a impedância do componente
-                if st.session_state.modo_avancado:
-                    if tipo == 'Resistor (R)':
-                        Z = complex(valor, 0)
-                        desc = f"R: {valor:.4f} Ω"
-                    elif tipo == 'Indutor (L)':
-                        XL = 2 * math.pi * st.session_state.fonte_frequencia * valor
-                        Z = complex(0, XL)
-                        desc = f"L: {valor:.4f} H (j{XL:.2f} Ω)"
-                    else:  # Capacitor
-                        XC = 1/(2 * math.pi * st.session_state.fonte_frequencia * valor)
-                        Z = complex(0, -XC)
-                        desc = f"C: {valor:.4f} F (-j{XC:.2f} Ω)"
-                else:
-                    if tipo == 'Resistor (R)':
-                        Z = complex(valor, 0)
-                        desc = f"R: {valor:.2f} Ω"
-                    elif tipo == 'Indutor (L)':
-                        Z = complex(0, valor)
-                        desc = f"L: j{valor:.2f} Ω"
-                    else:  # Capacitor
-                        Z = complex(0, -valor)
-                        desc = f"C: -j{valor:.2f} Ω"
-                
-                # Adiciona ao circuito
-                if st.session_state.primeiro_componente:
-                    st.session_state.impedancia_total = Z
-                    st.session_state.primeiro_componente = False
-                    st.session_state.componentes.append(f"Primeiro componente: {desc}")
-                else:
-                    st.session_state.conexao = conexao
-                    if conexao == 'SÉRIE':
-                        st.session_state.impedancia_total += Z
-                        st.session_state.componentes.append(f"Adicionado em série: {desc}")
-                    else:  # PARALELO
-                        if abs(st.session_state.impedancia_total + Z) < 1e-9:
-                            st.error("Erro: Divisão por zero na conexão paralela!")
-                        else:
-                            st.session_state.impedancia_total = (
-                                st.session_state.impedancia_total * Z
-                            ) / (st.session_state.impedancia_total + Z)
-                            st.session_state.componentes.append(f"Adicionado em paralelo: {desc}")
-                
-                st.session_state.valor_componente = 0.0
-                st.success(f"Componente adicionado: {desc}")
+            tipo_anterior = st.session_state.get('tipo_anterior', 'Resistor (R)')
+            tipo = st.selectbox("Tipo de Componente:", ('Resistor (R)', 'Indutor (L)', 'Capacitor (C)'), key='select_tipo_componente')
+            if tipo != tipo_anterior:
+                st.session_state.tipo_anterior = tipo
                 st.rerun()
+        with col2:
+            if tipo == 'Resistor (R)': label, unidades, default_unidade = "Resistência", ('Ω', 'kΩ', 'MΩ'), 'Ω'
+            elif tipo == 'Indutor (L)': label, unidades, default_unidade = "Indutância", ('H', 'mH', 'µH'), 'mH'
+            else: label, unidades, default_unidade = "Capacitância", ('F', 'mF', 'µF', 'nF', 'pF'), 'µF'
+            valor_col, unidade_col = st.columns([2, 1])
+            unidade_atual = st.session_state.unidade_atual.get(tipo, default_unidade)
+            step, fmt = get_step_and_format(unidade_atual)
+            with valor_col:
+                valor = st.number_input(label, 0.0, value=st.session_state.valor_atual.get(tipo, 100.0), step=step, format=fmt, key=f'valor_new_{tipo}')
+            with unidade_col:
+                unidade = st.selectbox("Unidade", unidades, index=unidades.index(unidade_atual), key=f'unidade_{tipo}', label_visibility="collapsed")
+                if unidade != unidade_atual:
+                    st.session_state.valor_atual[tipo] = converter_valor(valor, unidade_atual, unidade, tipo)
+                    st.session_state.unidade_atual[tipo] = unidade
+                    st.rerun()
+            st.session_state.valor_atual[tipo] = valor
+        if not st.session_state.primeiro_componente:
+            conexao = st.radio("Conectar em:", ('SÉRIE', 'PARALELO'), index=0, horizontal=True, key='radio_conexao')
+        
+        submitted = st.form_submit_button("Adicionar Componente")
+        if submitted:
+            if valor <= 0: st.error("O valor do componente deve ser positivo!")
+            else:
+                conexao_final = 'PRIMEIRO' if st.session_state.primeiro_componente else conexao
+                st.session_state.componentes.append({'id': len(st.session_state.componentes), 'tipo': tipo, 'valor': valor, 'unidade': unidade, 'conexao': conexao_final})
+                if st.session_state.primeiro_componente: st.session_state.primeiro_componente = False
+                st.success(f"Componente {tipo} adicionado em {conexao_final.lower()}."); st.rerun()
 
-# Visualização do circuito
-st.subheader("Circuito Montado")
+if st.session_state.componentes:
+    for comp in st.session_state.componentes:
+        comp['valor'] = st.session_state.get(f"slider_{comp['id']}", comp['valor'])
+    st.session_state.impedancia_total = calcular_impedancia_total(st.session_state.componentes, st.session_state.fonte_frequencia)
+
+st.subheader("Circuito Montado e Resultados")
 if not st.session_state.componentes:
     st.info("Nenhum componente adicionado ainda. Use o formulário acima para começar.")
 else:
-    for i, comp in enumerate(st.session_state.componentes, 1):
-        st.write(f"{i}. {comp}")
-
-# Resultados e análises
-st.subheader("Resultados da Análise")
-ret_total, pol_total = formatar_complexo(st.session_state.impedancia_total)
-
-col1, col2 = st.columns(2)
-with col1:
-    st.markdown("**Impedância Total:**")
-    st.markdown(f"- Forma retangular: `{ret_total} Ω`")
-    st.markdown(f"- Forma polar: `{pol_total}`")
+    col_circ, col_res = st.columns(2)
+    with col_circ:
+        st.write("##### Diagrama do Circuito")
+        st.warning("Aviso: O diagrama agrupa elementos série e paralelo, o que pode não refletir a ordem de cálculo para circuitos mistos complexos.", icon="⚠️")
+        try:
+            d = desenhar_circuito(st.session_state.componentes)
+            st.image(d.get_imagedata('svg').decode(), use_container_width=True)
+        except Exception as e:
+            st.error(f"Ocorreu um erro ao desenhar o circuito: {e}")
+        
+        st.write("##### Ajuste de Componentes")
+        for comp in st.session_state.componentes:
+            max_val, (step, fmt) = (comp['valor'] * 5 if comp['valor'] > 0 else 100, get_step_and_format(comp['unidade']))
+            st.slider(f"Ajuste {comp['tipo'][0]}{comp['id']+1} ({comp['unidade']})", 0.0, max_val, comp['valor'], key=f"slider_{comp['id']}", format=fmt)
     
-    if st.session_state.fonte_voltagem > 0 and abs(st.session_state.impedancia_total) > 1e-9:
-        corrente = st.session_state.fonte_voltagem / abs(st.session_state.impedancia_total)
-        fase_graus = math.degrees(cmath.phase(st.session_state.impedancia_total))
-        st.markdown("**Análise com Fonte:**")
-        st.markdown(f"- Corrente total: `{corrente:.4f} A`")
-        st.markdown(f"- Ângulo de fase: `{fase_graus:.2f}°`")
-        
-        P, Q, S, fp = calcular_potencias(
-            st.session_state.fonte_voltagem, 
-            corrente, 
-            st.session_state.impedancia_total
-        )
-        st.markdown("**Potências:**")
-        st.markdown(f"- Ativa (P): `{P:.4f} W`")
-        st.markdown(f"- Reativa (Q): `{Q:.4f} VAR`")
-        st.markdown(f"- Aparente (S): `{S:.4f} VA`")
-        st.markdown(f"- Fator de potência: `{fp:.4f}`")
+    with col_res:
+        st.write("##### Análise na Frequência de Operação")
+        Z_total = st.session_state.impedancia_total
+        ret_total, pol_total = formatar_complexo(Z_total)
+        st.metric(label="Impedância Total (Retangular)", value=f"{ret_total} Ω")
+        st.metric(label="Impedância Total (Polar)", value=f"{pol_total}")
+        reatancia_total = Z_total.imag
+        if reatancia_total > 1e-6: st.info("**🔸 Característica Indutiva:** A corrente se atrasa em relação à tensão.", icon="💡")
+        elif reatancia_total < -1e-6: st.info("**🔹 Característica Capacitiva:** A corrente se adianta em relação à tensão.", icon="💡")
+        else: st.info("**✅ Característica Resistiva:** A corrente e a tensão estão em fase.", icon="💡")
 
-with col2:
-    if abs(st.session_state.impedancia_total) > 1e-9:
-        st.pyplot(plot_fasores(st.session_state.impedancia_total))
+        if st.session_state.fonte_voltagem > 0 and abs(Z_total) > 1e-9:
+            I_total_complexa = st.session_state.fonte_voltagem / Z_total
+            st.metric(label="Corrente Total (Polar)", value=f"{abs(I_total_complexa):.4f} A ∠ {math.degrees(cmath.phase(I_total_complexa)):.2f}°")
+            P, Q, S, fp = calcular_potencias(st.session_state.fonte_voltagem, I_total_complexa)
+            c1, c2 = st.columns(2)
+            c1.metric("Potência Aparente (S)", f"{S:.2f} VA"); c2.metric("Fator de Potência (FP)", f"{fp:.4f}")
+            c1.metric("Potência Ativa (P)", f"{P:.2f} W"); c2.metric("Potência Reativa (Q)", f"{Q:.2f} VAR")
         
-        # Verifica se temos pelo menos um indutor e um capacitor para análise de ressonância
-        componentes = [c.split(':')[0] for c in st.session_state.componentes]
-        if 'L' in ''.join(componentes) and 'C' in ''.join(componentes) and st.session_state.fonte_frequencia > 0:
-            # Estimativa de L e C para o gráfico (simplificado)
-            L_est = 0
-            C_est = 0
-            for comp in st.session_state.componentes:
-                if 'L:' in comp:
-                    parts = comp.split('j')
-                    if len(parts) > 1:
-                        xl = float(parts[1].split(' ')[0])
-                        L_est = xl / (2 * math.pi * st.session_state.fonte_frequencia)
-                elif 'C:' in comp:
-                    parts = comp.split('-j')
-                    if len(parts) > 1:
-                        xc = float(parts[1].split(' ')[0])
-                        C_est = 1 / (2 * math.pi * st.session_state.fonte_frequencia * xc)
-            
-            if L_est > 0 and C_est > 0:
-                st.pyplot(plot_resposta_frequencia(
-                    R=abs(st.session_state.impedancia_total.real),
-                    L=L_est,
-                    C=C_est,
-                    freq_min=0.1,
-                    freq_max=1000
+        st.write("##### Diagrama Fasorial da Impedância")
+        st.pyplot(plot_fasores(Z_total))
+
+        tem_L = any(c['tipo'] == 'Indutor (L)' for c in st.session_state.componentes)
+        tem_C = any(c['tipo'] == 'Capacitor (C)' for c in st.session_state.componentes)
+        
+        if tem_L or tem_C:
+            with st.expander("Ver Resposta em Frequência", expanded=False):
+                st.pyplot(plotar_resposta_em_frequencia(
+                    st.session_state.componentes,
+                    freq_min=1,
+                    freq_max=max(1000, st.session_state.fonte_frequencia * 5),
+                    freq_atual=st.session_state.fonte_frequencia
                 ))
 
-# Rodapé
 st.markdown("---")
-st.markdown("""
-    **Simulador de Circuitos CA**  
-    Desenvolvido com Python + Streamlit  
-    *Versão 1.0 - Para fins educacionais*
-""")
+st.markdown("Desenvolvido com Python + Streamlit | Versão 1.4")
