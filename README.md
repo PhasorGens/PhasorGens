@@ -12,7 +12,7 @@
 
 Para testar o sistema em produção, acesse o link abaixo:
 
-**[➡️ Acessar o Simulador Online](https://phasorgens-simulador.streamlit.app/)**
+**[➡️ Acessar o Simulador Online](https://phasorgens-2vethzezvwz4ajhsj7a2is.streamlit.app/)**
 
 ---
 
